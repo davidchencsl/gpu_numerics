@@ -30,10 +30,9 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
-        dtype=dtype,
+        dtype="auto",
         low_cpu_mem_usage=True,
         trust_remote_code=args.trust_remote_code,
         device_map="auto" if device == "cuda" else None,
