@@ -2,10 +2,14 @@
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def to_cpu_float_list(t: torch.Tensor):
@@ -25,7 +29,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load tokenizer & model
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id, use_fast=True, trust_remote_code=args.trust_remote_code, token='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')
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id, use_fast=True, trust_remote_code=args.trust_remote_code, token=os.getenv("HF_TOKEN"))
     # Ensure pad_token exists (not required, but nice for attention masks)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -36,7 +40,7 @@ def main():
         low_cpu_mem_usage=True,
         trust_remote_code=args.trust_remote_code,
         device_map="auto" if device == "cuda" else None,
-        token='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'
+        token=os.getenv("HF_TOKEN")
     )
     model.eval()
 
