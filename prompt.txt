@@ -1,0 +1,287 @@
+Design and implement a distributed rate limiting system that can handle 1 million requests per second across multiple servers. The system should support different rate limiting algorithms (token bucket, sliding window, fixed window), be fault-tolerant, and provide real-time monitoring. Explain your architecture choices, discuss trade-offs, and provide a complete implementation in your preferred language.
+
+<think>
+This is a complex distributed systems problem that requires careful consideration of scalability, consistency, fault tolerance, and performance. Let me break this down systematically.
+
+Requirements Analysis:
+1. Handle 1M requests/second across multiple servers
+2. Support multiple rate limiting algorithms (token bucket, sliding window, fixed window)
+3. Fault tolerance
+4. Real-time monitoring
+5. Distributed architecture
+
+Key Challenges:
+1. Distributed state management
+2. Consistency vs. availability trade-offs
+3. Low latency requirements (rate limiting adds overhead)
+4. Horizontal scalability
+5. Network partitions and failures
+6. Clock synchronization across nodes
+
+Architecture Design:
+
+I'll design a hybrid architecture with the following components:
+
+1. Rate Limiter Service Layer:
+   - Stateless API gateway nodes
+   - Handle incoming requests and make rate limiting decisions
+   - Multiple instances for load distribution
+
+2. Distributed State Store:
+   - Redis Cluster or Apache Cassandra for storing rate limit counters
+   - Partitioned by user/API key for scalability
+   - Replication for fault tolerance
+
+3. Configuration Service:
+   - Centralized configuration management (e.g., etcd, Consul)
+   - Rate limit policies, algorithm selection
+   - Dynamic configuration updates
+
+4. Monitoring and Metrics:
+   - Time-series database (InfluxDB, Prometheus)
+   - Real-time dashboards
+   - Alerting system
+
+5. Load Balancer:
+   - Distribute requests across rate limiter instances
+   - Health checks and failover
+
+Algorithm Implementation Considerations:
+
+1. Token Bucket:
+   - Best for allowing bursts
+   - Requires atomic operations for token consumption
+   - Need to handle token refill timing
+
+2. Sliding Window:
+   - More accurate but computationally expensive
+   - Requires storing individual request timestamps
+   - Memory intensive for high-traffic users
+
+3. Fixed Window:
+   - Simple and memory efficient
+   - Less accurate due to boundary effects
+   - Risk of burst at window boundaries
+
+Distributed Consistency Approach:
+
+For 1M RPS, strict consistency would be too expensive. I'll use eventual consistency with local approximations:
+
+1. Local Rate Limiting:
+   - Each rate limiter instance maintains local counters
+   - Periodically sync with distributed store
+   - Accept some inaccuracy for performance
+
+2. Distributed Coordination:
+   - Use consistent hashing to route similar requests to same nodes
+   - Implement gossip protocol for counter synchronization
+   - Fallback to local decisions during network partitions
+
+Implementation in Go:
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+    "strconv"
+    "sync"
+    "time"
+    
+    "github.com/go-redis/redis/v8"
+    "github.com/gorilla/mux"
+)
+
+// RateLimitAlgorithm defines the interface for rate limiting algorithms
+type RateLimitAlgorithm interface {
+    IsAllowed(ctx context.Context, key string, limit int64, window time.Duration) (bool, error)
+    GetMetrics(ctx context.Context, key string) (*Metrics, error)
+}
+
+// Metrics represents rate limiting metrics
+type Metrics struct {
+    RequestCount    int64     `json:"request_count"`
+    AllowedCount    int64     `json:"allowed_count"`
+    RejectedCount   int64     `json:"rejected_count"`
+    LastRequestTime time.Time `json:"last_request_time"`
+}
+
+// TokenBucketLimiter implements token bucket algorithm
+type TokenBucketLimiter struct {
+    redis   *redis.Client
+    mu      sync.RWMutex
+    metrics map[string]*Metrics
+}
+
+func NewTokenBucketLimiter(redisClient *redis.Client) *TokenBucketLimiter {
+    return &TokenBucketLimiter{
+        redis:   redisClient,
+        metrics: make(map[string]*Metrics),
+    }
+}
+
+func (tbl *TokenBucketLimiter) IsAllowed(ctx context.Context, key string, limit int64, window time.Duration) (bool, error) {
+    bucketKey := fmt.Sprintf("bucket:%s", key)
+    lastRefillKey := fmt.Sprintf("last_refill:%s", key)
+    
+    // Lua script for atomic token bucket operations
+    luaScript := `
+        local bucket_key = KEYS[1]
+        local last_refill_key = KEYS[2]
+        local limit = tonumber(ARGV[1])
+        local refill_rate = tonumber(ARGV[2])
+        local current_time = tonumber(ARGV[3])
+        
+        local current_tokens = redis.call('GET', bucket_key)
+        local last_refill = redis.call('GET', last_refill_key)
+        
+        if current_tokens == false then
+            current_tokens = limit
+        else
+            current_tokens = tonumber(current_tokens)
+        end
+        
+        if last_refill == false then
+            last_refill = current_time
+        else
+            last_refill = tonumber(last_refill)
+        end
+        
+        -- Calculate tokens to add based on time elapsed
+        local time_passed = current_time - last_refill
+        local tokens_to_add = math.floor(time_passed * refill_rate)
+        current_tokens = math.min(limit, current_tokens + tokens_to_add)
+        
+        -- Try to consume a token
+        if current_tokens > 0 then
+            current_tokens = current_tokens - 1
+            redis.call('SET', bucket_key, current_tokens)
+            redis.call('SET', last_refill_key, current_time)
+            return {1, current_tokens}
+        else
+            redis.call('SET', last_refill_key, current_time)
+            return {0, current_tokens}
+        end
+    `
+    
+    refillRate := float64(limit) / window.Seconds()
+    currentTime := float64(time.Now().Unix())
+    
+    result, err := tbl.redis.Eval(ctx, luaScript, []string{bucketKey, lastRefillKey}, 
+        limit, refillRate, currentTime).Result()
+    
+    if err != nil {
+        return false, fmt.Errorf("redis error: %w", err)
+    }
+    
+    resultSlice := result.([]interface{})
+    allowed := resultSlice[0].(int64) == 1
+    
+    // Update metrics
+    tbl.updateMetrics(key, allowed)
+    
+    return allowed, nil
+}
+
+func (tbl *TokenBucketLimiter) updateMetrics(key string, allowed bool) {
+    tbl.mu.Lock()
+    defer tbl.mu.Unlock()
+    
+    if tbl.metrics[key] == nil {
+        tbl.metrics[key] = &Metrics{}
+    }
+    
+    tbl.metrics[key].RequestCount++
+    tbl.metrics[key].LastRequestTime = time.Now()
+    
+    if allowed {
+        tbl.metrics[key].AllowedCount++
+    } else {
+        tbl.metrics[key].RejectedCount++
+    }
+}
+
+func (tbl *TokenBucketLimiter) GetMetrics(ctx context.Context, key string) (*Metrics, error) {
+    tbl.mu.RLock()
+    defer tbl.mu.RUnlock()
+    
+    if metrics, exists := tbl.metrics[key]; exists {
+        return metrics, nil
+    }
+    
+    return &Metrics{}, nil
+}
+
+// SlidingWindowLimiter implements sliding window algorithm
+type SlidingWindowLimiter struct {
+    redis   *redis.Client
+    mu      sync.RWMutex
+    metrics map[string]*Metrics
+}
+
+func NewSlidingWindowLimiter(redisClient *redis.Client) *SlidingWindowLimiter {
+    return &SlidingWindowLimiter{
+        redis:   redisClient,
+        metrics: make(map[string]*Metrics),
+    }
+}
+
+func (swl *SlidingWindowLimiter) IsAllowed(ctx context.Context, key string, limit int64, window time.Duration) (bool, error) {
+    windowKey := fmt.Sprintf("sliding:%s", key)
+    currentTime := time.Now().Unix()
+    windowStart := currentTime - int64(window.Seconds())
+    
+    // Lua script for sliding window
+    luaScript := `
+        local key = KEYS[1]
+        local window_start = tonumber(ARGV[1])
+        local current_time = tonumber(ARGV[2])
+        local limit = tonumber(ARGV[3])
+        
+        -- Remove expired entries
+        redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+        
+        -- Count current requests in window
+        local current_count = redis.call('ZCARD', key)
+        
+        if current_count < limit then
+            -- Add current request
+            redis.call('ZADD', key, current_time, current_time)
+            redis.call('EXPIRE', key, 3600) -- Set expiration
+            return {1, current_count + 1}
+        else
+            return {0, current_count}
+        end
+    `
+    
+    result, err := swl.redis.Eval(ctx, luaScript, []string{windowKey}, 
+        windowStart, currentTime, limit).Result()
+    
+    if err != nil {
+        return false, fmt.Errorf("redis error: %w", err)
+    }
+    
+    resultSlice := result.([]interface{})
+    allowed := resultSlice[0].(int64) == 1
+    
+    swl.updateMetrics(key, allowed)
+    
+    return allowed, nil
+}
+
+func (swl *SlidingWindowLimiter) updateMetrics(key string, allowed bool) {
+    swl.mu.Lock()
+    defer swl.mu.Unlock()
+    
+    if swl.metrics[key] == nil {
+        swl.metrics[key] = &Metrics{}
+    }
+    
+    swl.metrics[key].RequestCount++
+    swl.metrics[key].LastRequestTime = time.Now()
+    
+    if allowed Wait, 
