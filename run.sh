@@ -15,5 +15,5 @@ TOP_K=128
 #   --top_k ${TOP_K} \
 #   --output ${MODEL_ID}_${MACHINE}_mmlupro.json
 
-uv run compute_kl.py --p_file ${MODEL_ID}_h100_mmlupro.json --q_file ${MODEL_ID}_h100_mmlupro.json
-#uv run compute_kl.py --p_file ${MODEL_ID}_h100.json --q_file ${MODEL_ID}_4090.json
+uv run compute_kl.py --p_file ${MODEL_ID}_h100_mmlupro.json --q_file ${MODEL_ID}_4090_mmlupro.json --quiet_positions
+uv run compute_kl.py --p_file ${MODEL_ID}_h100.json --q_file ${MODEL_ID}_4090.json --quiet_positions
