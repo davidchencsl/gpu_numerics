@@ -13,7 +13,7 @@ TOP_K=128
 #   --model_id ${MODEL} \
 #   --n_samples 25 \
 #   --top_k ${TOP_K} \
-#   --output ${MODEL_ID}_${MACHINE}_mmlupro.jsonl
+#   --output ${MODEL_ID}_${MACHINE}_mmlupro.json
 
-uv run compute_kl.py --p_file ${MODEL_ID}_h100_mmlupro.jsonl --q_file ${MODEL_ID}_4090_mmlupro.jsonl
+uv run compute_kl.py --p_file ${MODEL_ID}_h100_mmlupro.json --q_file ${MODEL_ID}_h100_mmlupro.json
 #uv run compute_kl.py --p_file ${MODEL_ID}_h100.json --q_file ${MODEL_ID}_4090.json
