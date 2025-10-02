@@ -39,7 +39,7 @@ load_dotenv()
 
 choices = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]
 max_model_length = 4096
-max_new_tokens = 256
+max_new_tokens = 128
 
 SEED = 42
 os.environ["PYTHONHASHSEED"] = str(SEED)
