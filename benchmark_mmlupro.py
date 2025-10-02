@@ -224,12 +224,12 @@ def save_res(res, output_path):
         
         # Calculate accuracy
         if not each["pred"]:
-            x = random.randint(0, len(each["options"]) - 1)
-            if x == each["answer_index"]:
-                corr += 1
-                # print("random hit.")
-            else:
-                wrong += 1
+            # x = random.randint(0, len(each["options"]) - 1)
+            # if x == each["answer_index"]:
+            #     corr += 1
+            #     # print("random hit.")
+            # else:
+            wrong += 1
         elif each["pred"] == each["answer"]:
             corr += 1
         else:

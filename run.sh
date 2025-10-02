@@ -19,6 +19,7 @@
 # uv run compute_kl.py --p_file ${MODEL_ID}_h100.json --q_file ${MODEL_ID}_4090.json --quiet_positions
 
 models=(meta-llama/Llama-3.2-1B-Instruct RedHatAI/Llama-3.2-1B-Instruct-FP8 meta-llama/Llama-3.1-8B-Instruct RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8)
+#models=(meta-llama/Llama-3.1-8B-Instruct)
 
 for model in ${models[@]}; do
     uv run benchmark_mmlupro.py --model $model --prompt_json sample_questions.json
