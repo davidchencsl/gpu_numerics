@@ -10,4 +10,5 @@ dependencies = [
     "dotenv>=0.9.9",
     "torch>=2.8.0",
     "transformers>=4.56.2",
+    "vllm>=0.10.2",
 ]
